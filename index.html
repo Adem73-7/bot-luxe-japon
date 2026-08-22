@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Luxe Japan - Dashboard & Pépites</title>
+  <!-- Tailwind CSS pour le style -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Supabase JS Client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-gray-100 font-sans text-gray-800 min-h-screen">
+
+  <!-- En-tête -->
+  <header class="bg-black text-white p-4 shadow-md">
+    <div class="max-w-6xl mx-auto flex justify-between items-center">
+      <h1 class="text-xl font-bold tracking-wide">LUXE JAPAN RESELL</h1>
+      <nav class="space-x-4">
+        <button onclick="switchTab('pepites')" id="btn-pepites" class="px-3 py-1 bg-white text-black font-semibold rounded">✨ Pépites</button>
+        <button onclick="switchTab('compta')" id="btn-compta" class="px-3 py-1 text-gray-300 hover:text-white font-semibold">📊 Compta & Dashboard</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto p-6">
+    
+    <!-- SECTION 1 : ONGLET PÉPITES -->
+    <section id="tab-pepites">
+      <h2 class="text-2xl font-bold mb-4">Pépites détectées au Japon</h2>
+      <div id="pepites-list" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <p class="text-gray-500">Chargement des meilleures affaires...</p>
+      </div>
+    </section>
+
+    <!-- SECTION 2 : ONGLET COMPTABILITÉ -->
+    <section id="tab-compta" class="hidden">
+      <!-- Cartes de résumé CA / Bénéfice -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div class="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
+          <h3 class="text-gray-500 font-semibold uppercase text-sm">Chiffre d'Affaires (Total Reventes)</h3>
+          <p id="total-ca" class="text-3xl font-extrabold mt-2">0,00 €</p>
+        </div>
+        <div class="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
+          <h3 class="text-gray-500 font-semibold uppercase text-sm">Bénéfice Net Total</h3>
+          <p id="total-benefice" class="text-3xl font-extrabold mt-2 text-green-600">0,00 €</p>
+        </div>
+      </div>
+
+      <!-- Formulaire d'ajout d'une vente -->
+      <div class="bg-white p-6 rounded-lg shadow mb-8">
+        <h3 class="text-lg font-bold mb-4">Ajouter une transaction (Achat / Revente)</h3>
+        <form id="add-transaction-form" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <input type="text" id="item_name" placeholder="Nom de l'article (ex: Sac Chanel)" required class="border p-2 rounded">
+          <input type="number" step="0.01" id="purchase_price_eur" placeholder="Prix d'achat (€)" required class="border p-2 rounded">
+          <input type="number" step="0.01" id="shipping_and_taxes_eur" placeholder="Port + Douane (€)" required class="border p-2 rounded">
+          <input type="number" step="0.01" id="sold_price_eur" placeholder="Prix de revente FR (€)" required class="border p-2 rounded">
+          <input type="number" step="0.01" id="platform_fee_eur" placeholder="Frais Vinted/Vestiaire (€)" required class="border p-2 rounded">
+          <button type="submit" class="bg-black text-white py-2 rounded font-semibold hover:bg-gray-800">Enregistrer la vente</button>
+        </form>
+      </div>
+
+      <!-- Tableau d'historique -->
+      <div class="bg-white rounded-lg shadow overflow-hidden">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="bg-gray-50 border-b text-gray-600 text-sm">
+              <th class="p-3">Article</th>
+              <th class="p-3">Achat (€)</th>
+              <th class="p-3">Frais/Douane (€)</th>
+              <th class="p-3">Revente (€)</th>
+              <th class="p-3">Bénéfice Net (€)</th>
+            </tr>
+          </thead>
+          <tbody id="compta-table-body">
+            <tr><td colspan="5" class="p-3 text-gray-500">Chargement de la comptabilité...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    // ⚠️ REMPLACE PAR TES VRAIES INFOS SUPABASE DU PROJET
+    const SUPABASE_URL = "https://TON_PROJET.supabase.co";
+    const SUPABASE_KEY = "TA_CLE_ANON_OU_SERVICE";
+    
+    const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    // Navigation Onglets
+    function switchTab(tab) {
+      document.getElementById('tab-pepites').classList.toggle('hidden', tab !== 'pepites');
+      document.getElementById('tab-compta').classList.toggle('hidden', tab !== 'compta');
+      
+      document.getElementById('btn-pepites').className = tab === 'pepites' ? "px-3 py-1 bg-white text-black font-semibold rounded" : "px-3 py-1 text-gray-300 hover:text-white font-semibold";
+      document.getElementById('btn-compta').className = tab === 'compta' ? "px-3 py-1 bg-white text-black font-semibold rounded" : "px-3 py-1 text-gray-300 hover:text-white font-semibold";
+
+      if (tab === 'compta') loadCompta();
+    }
+
+    // Charger les Pépites
+    async function loadPepites() {
+      const { data: deals, error } = await _supabase.from('deals').select('*').order('created_at', { ascending: false });
+      const container = document.getElementById('pepites-list');
+      
+      if (error || !deals || deals.length === 0) {
+        container.innerHTML = `<p class="text-gray-500">Aucune pépite détectée pour le moment. Le bot tourne en arrière-plan...</p>`;
+        return;
+      }
+
+      container.innerHTML = deals.map(item => `
+        <div class="bg-white p-5 rounded-lg shadow hover:shadow-lg transition">
+          <h3 class="font-bold text-lg mb-2">${item.title}</h3>
+          <p class="text-sm text-gray-600 mb-1">Prix Japon : <strong>${item.buy_price_jpy} JPY</strong> (~${item.total_cost_eur} € rendu FR)</p>
+          <p class="text-sm text-gray-600 mb-1">Cote Revente FR : <strong>${item.estimated_resale_eur} €</strong></p>
+          <p class="text-md text-green-600 font-bold mb-4">Bénéfice estimé : +${item.estimated_profit} €</p>
+          <a href="${item.item_url}" target="_blank" class="block text-center bg-blue-600 text-white font-semibold py-2 rounded hover:bg-blue-700">Voir l'offre originale ↗</a>
+        </div>
+      `).join('');
+    }
+
+    // Charger la Comptabilité
+    async function loadCompta() {
+      const { data: rows, error } = await _supabase.from('transactions').select('*').order('created_at', { ascending: false });
+      const tbody = document.getElementById('compta-table-body');
+      
+      if (error || !rows) return;
+
+      let totalCA = 0;
+      let totalBenefice = 0;
+
+      tbody.innerHTML = rows.map(r => {
+        const cost = parseFloat(r.purchase_price_eur || 0) + parseFloat(r.shipping_and_taxes_eur || 0) + parseFloat(r.platform_fee_eur || 0);
+        const profit = parseFloat(r.sold_price_eur || 0) - cost;
+        
+        totalCA += parseFloat(r.sold_price_eur || 0);
+        totalBenefice += profit;
+
+        return `
+          <tr class="border-b">
+            <td class="p-3 font-semibold">${r.item_name}</td>
+            <td class="p-3">${r.purchase_price_eur} €</td>
+            <td class="p-3">${r.shipping_and_taxes_eur} €</td>
+            <td class="p-3">${r.sold_price_eur} €</td>
+            <td class="p-3 font-bold ${profit >= 0 ? 'text-green-600' : 'text-red-600'}">${profit.toFixed(2)} €</td>
+          </tr>
+        `;
+      }).join('');
+
+      document.getElementById('total-ca').innerText = totalCA.toFixed(2) + " €";
+      document.getElementById('total-benefice').innerText = totalBenefice.toFixed(2) + " €";
+    }
+
+    // Ajouter une transaction
+    document.getElementById('add-transaction-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await _supabase.from('transactions').insert([{
+        item_name: document.getElementById('item_name').value,
+        purchase_price_eur: parseFloat(document.getElementById('purchase_price_eur').value),
+        shipping_and_taxes_eur: parseFloat(document.getElementById('shipping_and_taxes_eur').value),
+        sold_price_eur: parseFloat(document.getElementById('sold_price_eur').value),
+        platform_fee_eur: parseFloat(document.getElementById('platform_fee_eur').value)
+      }]);
+      
+      e.target.reset();
+      loadCompta();
+    });
+
+    // Initialisation
+    loadPepites();
+  </script>
+</body>
+</html>
