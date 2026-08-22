@@ -10,7 +10,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Liste de pépites de luxe dénichées au Japon
+# Liste de pépites avec images
 DEALS = [
     {
         "title": "Sac Louis Vuitton Speedy 25 Monogram",
@@ -18,7 +18,8 @@ DEALS = [
         "total_cost_eur": 298.00,
         "estimated_resale_eur": 520.00,
         "estimated_profit": 144.00,
-        "item_url": "https://zenmarket.jp"
+        "item_url": "https://zenmarket.jp",
+        "image_url": "https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&w=600&q=80"
     },
     {
         "title": "Sac Chanel Timeless Vintage Cuir Agneau Noir",
@@ -26,7 +27,8 @@ DEALS = [
         "total_cost_eur": 1402.00,
         "estimated_resale_eur": 2200.00,
         "estimated_profit": 468.00,
-        "item_url": "https://doorzo.com"
+        "item_url": "https://doorzo.com",
+        "image_url": "https://images.unsplash.com/photo-1548036328-c9fa89d128fa?auto=format&fit=crop&w=600&q=80"
     },
     {
         "title": "Pochette Hermès Mini Evelyne Clemence",
@@ -34,15 +36,19 @@ DEALS = [
         "total_cost_eur": 1588.00,
         "estimated_resale_eur": 2400.00,
         "estimated_profit": 452.00,
-        "item_url": "https://zenmarket.jp"
+        "item_url": "https://zenmarket.jp",
+        "image_url": "https://images.unsplash.com/photo-1590874103328-eac38a683ce7?auto=format&fit=crop&w=600&q=80"
     }
 ]
 
 def run_bot():
-    print("🚀 Envoi des pépites vers Supabase...")
+    print("🚀 Nettoyage et envoi des nouvelles pépites...")
+    # On vide les anciennes données sans image
+    supabase.table("deals").delete().neq("title", "").execute()
+    
     for item in DEALS:
         supabase.table("deals").insert(item).execute()
-    print("✅ Pépites enregistrées avec succès !")
+    print("✅ Pépites avec photos enregistrées !")
 
 if __name__ == "__main__":
     run_bot()
