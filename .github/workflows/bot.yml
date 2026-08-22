@@ -8,13 +8,13 @@ jobs:
   run-scraper:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
       - name: Installer les dépendances
-        run: pip install requests supabase
+        run: pip install requests supabase beautifulsoup4
       - name: Lancer le bot
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
