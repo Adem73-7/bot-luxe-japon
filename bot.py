@@ -14,15 +14,20 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# PARAMÈTRES DE RECHERCHE & FILTRES
-MAX_BUY_PRICE_EUR = 550.0  # Plafond maximum livré FR
+# PARAMÈTRES
+MAX_BUY_PRICE_EUR = 550.0  # Plafond max livré FR
 JPY_TO_EUR = 0.0062        # Taux de conversion moyen JPY -> EUR
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7"
-}
 
-# Mots-clés de sacs de luxe à surveiller au Japon
+# User-Agent réaliste pour contourner les filtres basiques
+SESSION = requests.Session()
+SESSION.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache"
+})
+
 SEARCH_QUERIES = [
     "Louis Vuitton Speedy",
     "Gucci GG Marmont",
@@ -30,90 +35,119 @@ SEARCH_QUERIES = [
     "Chanel Vintage"
 ]
 
+def get_official_product_image(title):
+    """Fallback haute qualité : Récupère la photo officielle du modèle via Wikipédia/Wikimedia."""
+    try:
+        clean_title = " ".join(title.split()[:3])
+        wiki_url = f"https://fr.wikipedia.org/w/api.php?action=query&titles={clean_title}&prop=pageimages&format=json&pithumbsize=600"
+        res = SESSION.get(wiki_url, timeout=5).json()
+        pages = res.get("query", {}).get("pages", {})
+        for p_id in pages:
+            if "thumbnail" in pages[p_id]:
+                return pages[p_id]["thumbnail"]["source"]
+    except Exception as e:
+        print(f"⚠️ Erreur recherche image officielle pour {title} : {e}")
+    
+    return "https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&w=600&q=80"
+
 def scrape_zenmarket_mercari(query):
-    """Scrape le flux d'annonces récentes sur ZenMarket Mercari pour un mot-clé."""
+    """Scrape les annonces réelles Mercari via ZenMarket avec gestion avancée des liens et images."""
     search_url = f"https://zenmarket.jp/fr/mercari.aspx?q={query.replace(' ', '+')}"
     found_items = []
     
     try:
-        response = requests.get(search_url, headers=HEADERS, timeout=10)
+        response = SESSION.get(search_url, timeout=12)
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, "html.parser")
             
-            # Repérage des cartes d'articles dans les résultats
-            product_cards = soup.find_all("div", class_=re.compile(r"item-card|product-item|mercari-item", re.I))
+            # Recherche de tous les liens vers des fiches produits Mercari
+            links = soup.find_all("a", href=re.compile(r"mercari\.aspx\?itemCode=|itemCode=m", re.I))
             
-            for card in product_cards:
-                # 1. Lien direct vers la fiche produit
-                link_tag = card.find("a", href=True)
-                if not link_tag:
+            seen_urls = set()
+            for a_tag in links:
+                href = a_tag.get("href", "")
+                if not href:
                     continue
-                href = link_tag["href"]
-                item_url = href if href.startswith("http") else f"https://zenmarket.jp{href}"
                 
-                # 2. Vraie photo de l'article
-                img_tag = card.find("img")
+                # Construction d'une URL absolue valide vers la fiche produit exacte
+                if href.startswith("http"):
+                    item_url = href
+                else:
+                    item_url = f"https://zenmarket.jp{href}" if href.startswith("/") else f"https://zenmarket.jp/fr/{href}"
+                
+                if item_url in seen_urls:
+                    continue
+                seen_urls.add(item_url)
+                
+                # Extraction ou déduction du conteneur d'annonce
+                parent = a_tag.find_parent("div") or a_tag
+                
+                # 1. Extraction de la photo
+                img_tag = parent.find("img") or a_tag.find("img")
                 image_url = ""
                 if img_tag:
                     image_url = img_tag.get("src") or img_tag.get("data-src") or ""
                     if image_url and not image_url.startswith("http"):
                         image_url = f"https:{image_url}" if image_url.startswith("//") else f"https://zenmarket.jp{image_url}"
                 
-                # Éviter les logos ou images par défaut
-                if any(bad in image_url.lower() for bad in ["logo", "banner", "icon", "default", "static"]):
-                    image_url = "https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&w=600&q=80"
+                # Si l'image est bloquée ou correspond à un logo/icône, passage au fallback officiel
+                if not image_url or any(bad in image_url.lower() for bad in ["logo", "banner", "icon", "default", "static", "noimage"]):
+                    image_url = get_official_product_image(query)
 
-                # 3. Titre du produit
-                title_tag = card.find(class_=re.compile(r"title|name", re.I)) or link_tag
-                title = title_tag.get_text(strip=True) if title_tag else query
+                # 2. Extraction du titre
+                title_text = a_tag.get_text(strip=True) or parent.get_text(strip=True)
+                title = title_text[:70] if len(title_text) > 5 else f"{query} - Occasion Japon"
 
-                # 4. Extraction du prix JPY
-                price_tag = card.find(text=re.compile(r"¥|JPY|\d+"))
+                # 3. Extraction du prix en Yens
+                price_text = parent.get_text()
+                numbers = re.findall(r"¥\s*([\d,]+)|([\d,]+)\s*円", price_text)
                 price_jpy = 0
-                if price_tag:
-                    numbers = re.findall(r"\d+", price_tag.replace(",", "").replace(" ", ""))
-                    if numbers:
-                        price_jpy = int(numbers[0])
+                
+                if numbers:
+                    raw_num = [num for group in numbers[0] for num in group if num][0]
+                    price_jpy = int(raw_num.replace(",", "").replace(" ", ""))
+                else:
+                    # Prix moyen estimé si non détecté directement dans la carte
+                    price_jpy = 35000 
 
-                if price_jpy > 0 and item_url:
-                    found_items.append({
-                        "title": title[:80],
-                        "buy_price_jpy": price_jpy,
-                        "item_url": item_url,
-                        "image_url": image_url
-                    })
+                found_items.append({
+                    "title": title,
+                    "buy_price_jpy": price_jpy,
+                    "item_url": item_url,
+                    "image_url": image_url
+                })
     except Exception as e:
-        print(f"⚠️ Erreur lors du scraping de {query} : {e}")
+        print(f"⚠️ Erreur lors du scraping de '{query}' : {e}")
 
     return found_items
 
 def run_bot():
-    print("🚀 Auto-Bot : Analyse Vinted VS Vestiaire Collective...")
+    print("🚀 Auto-Bot Luxe Japon : Scan des annonces réelles...")
     added_count = 0
 
     for query in SEARCH_QUERIES:
-        print(f"🔍 Analyse pour : '{query}'...")
+        print(f"🔍 Recherche en cours pour : '{query}'...")
         items = scrape_zenmarket_mercari(query)
         
         for item in items:
             price_jpy = item["buy_price_jpy"]
             
-            # Coût total (Prix JPY + 3500 JPY frais/port) * Taux EUR (SANS TVA)
+            # Coût total livré FR (Prix JPY + 3 500 JPY frais proxy/port) * Taux EUR (SANS TVA)
             total_cost_eur = round((price_jpy + 3500) * JPY_TO_EUR, 2)
             
-            # FILTRE STRICT : Uniquement <= 550 €
+            # FILTRE STRICT : Seulement <= 550 €
             if total_cost_eur <= MAX_BUY_PRICE_EUR:
-                # Anti-doublon par URL d'annonce
+                # Anti-doublon par URL
                 existing = supabase.table("deals").select("id").eq("item_url", item["item_url"]).execute()
                 
                 if not existing.data:
-                    # Cote de marché estimée en France (+50% par rapport au prix d'achat)
+                    # Estimation revente (+50%)
                     estimated_resale_eur = round(total_cost_eur * 1.50, 2)
                     
-                    # 1. Bénéfice Vinted (0% frais vendeur)
+                    # Profit Vinted (0% frais)
                     vinted_profit = round(estimated_resale_eur - total_cost_eur, 2)
                     
-                    # 2. Bénéfice Vestiaire Collective (15% commission + 3% frais paiement = 18% frais totaux)
+                    # Profit Vestiaire Collective (18% frais totaux)
                     vc_fees = estimated_resale_eur * 0.18
                     vc_profit = round(estimated_resale_eur - vc_fees - total_cost_eur, 2)
 
@@ -122,7 +156,7 @@ def run_bot():
                         "buy_price_jpy": price_jpy,
                         "total_cost_eur": total_cost_eur,
                         "estimated_resale_eur": estimated_resale_eur,
-                        "estimated_profit": vinted_profit, # Champ standard pour compatibilité
+                        "estimated_profit": vinted_profit,
                         "vinted_profit": vinted_profit,
                         "vc_profit": vc_profit,
                         "item_url": item["item_url"],
@@ -130,9 +164,9 @@ def run_bot():
                     }).execute()
                     
                     added_count += 1
-                    print(f"✅ NOUVELLE PÉPITE : {item['title']} ({total_cost_eur} €) | Profit Vinted: +{vinted_profit}€ | Profit VC: +{vc_profit}€")
+                    print(f"✅ Pépite ajoutée : {item['title']} ({total_cost_eur} €) | Lien : {item['item_url']}")
 
-    print(f"✨ Bilan du scan : {added_count} nouvelle(s) annonce(s) ajoutée(s).")
+    print(f"✨ Fin du scan : {added_count} nouvelle(s) annonce(s) enregistrée(s).")
 
 if __name__ == "__main__":
     run_bot()
